@@ -484,6 +484,51 @@ def sort_equipment_by_score(equipment_list: List[Equipment], requirements: Equip
     scored_equipment.sort(key=lambda x: x[1], reverse=True)
     return [e for e, _ in scored_equipment]
 
+def meets_requirements(combination: Dict[str, Equipment], requirements: EquipmentRequirement) -> bool:
+    """Check if a combination meets the requirements.
+    
+    Args:
+        combination (Dict[str, Equipment]): The equipment combination to check
+        requirements (EquipmentRequirement): The requirements to check against
+        
+    Returns:
+        bool: True if the combination meets all requirements
+    """
+    total_attack = sum(e.attack for e in combination.values() if e is not None)
+    total_defense = sum(e.defense for e in combination.values() if e is not None)
+    
+    # Early exit if stats don't meet requirements
+    if total_attack < requirements.min_attack or total_defense < requirements.min_defense:
+        return False
+    
+    # Calculate total skills
+    skills = defaultdict(int)
+    ex_skills = {}
+    
+    for equip in combination.values():
+        if equip is not None:
+            # Add regular skills
+            for skill, boost in equip.skills.items():
+                skills[skill] += boost
+            
+            # Add EX skills (take highest boost)
+            if equip.ex_skill:
+                skill_name, boost = equip.ex_skill
+                if skill_name not in ex_skills or boost > ex_skills[skill_name]:
+                    ex_skills[skill_name] = boost
+    
+    # Check required skills
+    for skill, required_level in requirements.required_skills.items():
+        if skills.get(skill, 0) < required_level:
+            return False
+    
+    # Check required EX skills
+    for skill in requirements.required_ex_skills:
+        if skill not in ex_skills:
+            return False
+    
+    return True
+
 @st.cache_data(show_spinner=False)
 def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequirement, max_combinations: int = 10) -> List[EquipmentCombination]:
     """Find equipment combinations that meet the given requirements."""
@@ -523,7 +568,7 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
             
         slots = list(current_combination.keys())
         if slot_index >= len(slots):
-            if meets_requirements(current_combination):
+            if meets_requirements(current_combination, requirements):  # Pass requirements here
                 # Create EquipmentCombination object
                 equipment_names = {
                     slot: format_equipment_name(equip) for slot, equip in current_combination.items()
@@ -576,57 +621,6 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
     # Sort combinations by contribution score and then total attack + defense
     valid_combinations.sort(key=lambda x: (x.contribution_score, x.total_attack + x.total_defense), reverse=True)
     return valid_combinations, total_checked, total_combinations
-
-def meets_requirements(combination: Dict[str, Equipment]) -> bool:
-    """Check if a combination meets the requirements."""
-    total_attack = sum(e.attack for e in combination.values() if e is not None)
-    total_defense = sum(e.defense for e in combination.values() if e is not None)
-    
-    # Early exit if stats don't meet requirements
-    if total_attack < min_attack or total_defense < min_defense:
-        return False
-    
-    # Calculate total skills
-    skills = defaultdict(int)
-    ex_skills = {}
-    
-    # Track required skills found
-    required_skills_found = set()
-    required_ex_skills_found = set()
-    
-    for equip in combination.values():
-        if equip is not None:
-            # Add regular skills
-            for skill, boost in equip.skills.items():
-                skills[skill] += boost
-                if skill in required_skills:
-                    if skills[skill] >= required_skills[skill]:
-                        required_skills_found.add(skill)
-            
-            # Add EX skills (take highest boost)
-            if equip.ex_skill:
-                skill_name, boost = equip.ex_skill
-                if skill_name not in ex_skills or boost > ex_skills[skill_name]:
-                    ex_skills[skill_name] = boost
-                    if skill_name in required_ex_skills:
-                        required_ex_skills_found.add(skill_name)
-            
-            # Early exit if we found all required skills
-            if (len(required_skills_found) == len(required_skills) and
-                len(required_ex_skills_found) == len(required_ex_skills)):
-                return True
-    
-    # Check required skills
-    for skill, required_level in required_skills.items():
-        if skills.get(skill, 0) < required_level:
-            return False
-    
-    # Check required EX skills
-    for skill in required_ex_skills:
-        if skill not in ex_skills:
-            return False
-    
-    return True
 
 if __name__ == "__main__":
     main() 
