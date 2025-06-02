@@ -34,8 +34,8 @@ build/
 backup/
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
 
@@ -47,4 +47,16 @@ venv/
 ENV/
 
 # Streamlit secrets
-.streamlit/secrets.toml 
+.streamlit/secrets.toml
+
+# Project specific
+backup/
+debug_raw.html
+dol_hand.html
+equipment_data.csv
+parse_equipment_weapon.py
+GVO_Equipment_Analyzer.spec
+equipment_base64.txt
+*.spec
+debug_*.html
+*_raw.html 
