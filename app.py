@@ -410,6 +410,11 @@ def main():
                     
                     # Create columns for the results
                     cols = st.columns(2)
+                    
+                    # Initialize the apply tracker if not exists
+                    if 'applying_combination' not in st.session_state:
+                        st.session_state.applying_combination = None
+                    
                     for i, combo in enumerate(combinations, 1):
                         # Store this combination in session state before creating the expander
                         st.session_state.current_combinations[i] = {
@@ -432,30 +437,29 @@ def main():
                                     st.write(f"- {skill}: R{level}")
                             
                             # Add button to apply this combination
-                            button_key = f"apply_{i}"
-                            if button_key not in st.session_state:
-                                st.session_state[button_key] = False
-                                
-                            if st.button("Apply This Combination", key=button_key):
-                                st.session_state[button_key] = True
-                            
-                            # Apply the combination if the button was clicked
-                            if st.session_state[button_key]:
-                                # Debug output
-                                st.write("Applying combination...")
-                                st.write(f"Combination {i} data:", st.session_state.current_combinations[i])
-                                
-                                # Clear existing selections first
-                                for slot in ['Weapon', 'Head', 'Body', 'Hands', 'Feet', 'Acc']:
-                                    st.session_state[f"select_{slot}"] = "None"
-                                
-                                # Apply the new combination
-                                for slot, equip_name in st.session_state.current_combinations[i].items():
-                                    st.session_state[f"select_{slot}"] = equip_name
-                                
-                                # Reset the button state
-                                st.session_state[button_key] = False
+                            if st.button("Apply This Combination", key=f"apply_{i}"):
+                                st.session_state.applying_combination = i
                                 st.experimental_rerun()
+                    
+                    # Handle combination application after button click
+                    if st.session_state.applying_combination is not None:
+                        i = st.session_state.applying_combination
+                        if i in st.session_state.current_combinations:
+                            # Debug output
+                            st.write("Applying combination...")
+                            st.write(f"Combination {i} data:", st.session_state.current_combinations[i])
+                            
+                            # Clear existing selections first
+                            for slot in ['Weapon', 'Head', 'Body', 'Hands', 'Feet', 'Acc']:
+                                st.session_state[f"select_{slot}"] = "None"
+                            
+                            # Apply the new combination
+                            for slot, equip_name in st.session_state.current_combinations[i].items():
+                                st.session_state[f"select_{slot}"] = equip_name
+                            
+                            # Reset the applying state
+                            st.session_state.applying_combination = None
+                            st.experimental_rerun()
                     
                     # Show search statistics
                     st.sidebar.write("Search Statistics:")
