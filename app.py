@@ -384,8 +384,18 @@ def main():
                     search_results_container.warning("No combinations found matching the requirements.")
                 else:
                     search_results_container.success(f"Found {len(combinations)} combinations matching your requirements!")
-                    for i, combo in enumerate(combinations[:10], 1):
-                        with search_results_container.expander(f"Combination {i} - Attack: {combo.total_attack}, Defense: {combo.total_defense}"):
+                    
+                    # Create columns for the results
+                    cols = st.columns(2)
+                    for i, combo in enumerate(combinations, 1):
+                        with cols[i % 2].expander(
+                            f"Combination {i} - Attack: {combo.total_attack}, Defense: {combo.total_defense}"
+                            f" (Score: {combo.contribution_score:.2f})"
+                        ):
+                            # Store the combination in session state
+                            combo_key = f"combo_{i}"
+                            st.session_state[combo_key] = combo.equipment
+                            
                             for slot, equip_name in combo.equipment.items():
                                 if equip_name != "None":
                                     st.write(f"{slot}: {equip_name}")
@@ -399,9 +409,9 @@ def main():
                             
                             # Add button to apply this combination
                             if st.button("Apply This Combination", key=f"apply_{i}"):
-                                for slot, equip_name in combo.equipment.items():
-                                    if equip_name != "None":
-                                        st.session_state[f"select_{slot}"] = equip_name
+                                # Apply the combination from session state
+                                for slot, equip_name in st.session_state[combo_key].items():
+                                    st.session_state[f"select_{slot}"] = equip_name
                                 st.experimental_rerun()
         except Exception as e:
             search_results_container.error(f"An error occurred while searching: {str(e)}")
@@ -414,33 +424,77 @@ class EquipmentCombination:
     total_defense: int
     skills: Dict[str, int]
     ex_skills: Dict[str, int]
+    contribution_score: float = 0.0  # Added contribution score
+
+def calculate_contribution_score(equipment: Equipment, requirements: EquipmentRequirement) -> float:
+    """Calculate how much this equipment contributes to meeting requirements."""
+    score = 0.0
+    
+    # Add contribution from attack and defense if they're required
+    if requirements.min_attack > 0:
+        score += float(equipment.attack) / requirements.min_attack
+        
+    if requirements.min_defense > 0:
+        score += float(equipment.defense) / requirements.min_defense
+        
+    # Add contribution from skills
+    for skill_name, required_level in requirements.required_skills.items():
+        if skill_name in equipment.skills:
+            score += float(equipment.skills[skill_name]) / required_level
+            
+    # Add contribution from EX skills
+    if equipment.ex_skill and equipment.ex_skill[0] in requirements.required_ex_skills:
+        score += float(equipment.ex_skill[1])  # EX skills weighted more heavily
+                
+    return score
+
+def sort_equipment_by_score(equipment_list: List[Equipment], requirements: EquipmentRequirement) -> List[Equipment]:
+    """Sort equipment by their contribution score."""
+    scored_equipment = [(e, calculate_contribution_score(e, requirements)) for e in equipment_list]
+    scored_equipment.sort(key=lambda x: x[1], reverse=True)
+    return [e for e, _ in scored_equipment]
 
 @st.cache_data(show_spinner=False)
 def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequirement) -> List[EquipmentCombination]:
-    """Find equipment combinations that meet the given requirements.
-    
-    Args:
-        _database (EquipmentDatabase): The equipment database to search (underscore prefix to skip hashing)
-        requirements (EquipmentRequirement): The search requirements
-        
-    Returns:
-        List[EquipmentCombination]: List of valid equipment combinations
-    """
+    """Find equipment combinations that meet the given requirements."""
     valid_combinations = []
+    total_checked = 0
     
-    # Get all equipment that matches gender requirement
+    # Get all equipment that matches gender requirement and sort by contribution score
     valid_equipment = defaultdict(list)
     for part, equipment_list in _database.equipment_by_part.items():
+        valid_pieces = []
         for equip in equipment_list:
             if requirements.gender == "All" or equip.gender in [requirements.gender, "All"]:
-                # Early pruning: check if equipment has any required skills
-                has_potential = False
-                for skill in requirements.required_skills:
-                    if skill in equip.skills or (equip.ex_skill and equip.ex_skill[0] == skill):
-                        has_potential = True
-                        break
-                if has_potential or not requirements.required_skills:
-                    valid_equipment[part].append(equip)
+                valid_pieces.append(equip)
+        valid_equipment[part] = sort_equipment_by_score(valid_pieces, requirements)
+    
+    # Calculate total possible combinations
+    total_combinations = 1
+    for equip_list in valid_equipment.values():
+        total_combinations *= (len(equip_list) + 1)  # +1 for empty slot option
+    
+    def check_continue() -> bool:
+        """Check if we should continue searching based on progress."""
+        if len(valid_combinations) >= 10:
+            if not st.session_state.get('continue_search', True):
+                return False
+            st.session_state.continue_search = st.sidebar.button(
+                "Found 10 combinations. Continue searching?",
+                key="continue_10"
+            )
+            return st.session_state.continue_search
+            
+        if total_checked >= 10000:
+            if not st.session_state.get('continue_search', True):
+                return False
+            st.session_state.continue_search = st.sidebar.button(
+                f"Checked {total_checked} combinations. Continue searching?",
+                key="continue_10000"
+            )
+            return st.session_state.continue_search
+            
+        return True
     
     # Helper function to check if a combination meets requirements
     def meets_requirements(combination: Dict[str, Equipment]) -> bool:
@@ -493,8 +547,7 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
         
         return True
     
-    # Generate combinations (using itertools.product would be too memory intensive)
-    # Instead, use a recursive approach with early pruning
+    # Generate combinations using recursive approach with early pruning
     current_combination = {
         'Weapon': None,
         'Head': None,
@@ -505,9 +558,11 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
     }
     
     def recursive_search(slot_index: int = 0):
-        if len(valid_combinations) >= 10:  # Limit to 10 combinations
-            return
+        nonlocal total_checked
         
+        if not check_continue():
+            return
+            
         slots = list(current_combination.keys())
         if slot_index >= len(slots):
             if meets_requirements(current_combination):
@@ -518,11 +573,14 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
                 total_attack = sum(e.attack for e in current_combination.values() if e is not None)
                 total_defense = sum(e.defense for e in current_combination.values() if e is not None)
                 
-                # Calculate skills
+                # Calculate skills and contribution score
                 skills = defaultdict(int)
                 ex_skills = {}
+                contribution_score = 0.0
+                
                 for equip in current_combination.values():
                     if equip is not None:
+                        contribution_score += calculate_contribution_score(equip, requirements)
                         for skill, boost in equip.skills.items():
                             skills[skill] += boost
                         if equip.ex_skill:
@@ -535,17 +593,21 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
                     total_attack=total_attack,
                     total_defense=total_defense,
                     skills=dict(skills),
-                    ex_skills=ex_skills
+                    ex_skills=ex_skills,
+                    contribution_score=contribution_score
                 )
                 valid_combinations.append(combo)
+            total_checked += 1
             return
         
         current_slot = slots[slot_index]
         
-        # Try each equipment piece for current slot
+        # Try each equipment piece for current slot (already sorted by contribution)
         for equipment in valid_equipment[current_slot]:
             current_combination[current_slot] = equipment
             recursive_search(slot_index + 1)
+            if len(valid_combinations) >= 10 and not st.session_state.get('continue_search', True):
+                return
         
         # Also try without any equipment in this slot
         current_combination[current_slot] = None
@@ -553,8 +615,8 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
     
     recursive_search()
     
-    # Sort combinations by total attack + defense
-    valid_combinations.sort(key=lambda x: (x.total_attack + x.total_defense), reverse=True)
+    # Sort combinations by contribution score and then total attack + defense
+    valid_combinations.sort(key=lambda x: (x.contribution_score, x.total_attack + x.total_defense), reverse=True)
     return valid_combinations
 
 if __name__ == "__main__":
