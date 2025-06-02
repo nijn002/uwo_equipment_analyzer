@@ -375,8 +375,27 @@ def main():
                     gender=gender
                 )
                 
+                # Initialize search state
+                if 'continue_search' not in st.session_state:
+                    st.session_state.continue_search = True
+                    st.session_state.max_combinations = 10
+                
                 # Find combinations
-                combinations = find_combinations(st.session_state.database, requirements)
+                combinations, total_checked, total_combinations = find_combinations(
+                    st.session_state.database, 
+                    requirements,
+                    st.session_state.max_combinations
+                )
+                
+                # Check if we should continue searching
+                if total_checked >= 10000:
+                    if st.sidebar.button("Checked 10000 combinations. Continue searching?"):
+                        st.session_state.max_combinations += 10
+                        st.experimental_rerun()
+                elif len(combinations) >= 10:
+                    if st.sidebar.button("Found 10 combinations. Continue searching?"):
+                        st.session_state.max_combinations += 10
+                        st.experimental_rerun()
                 
                 # Display results
                 search_results_container.subheader("Search Results")
@@ -385,6 +404,13 @@ def main():
                 else:
                     search_results_container.success(f"Found {len(combinations)} combinations matching your requirements!")
                     
+                    # Store combinations in session state
+                    if 'current_combinations' not in st.session_state:
+                        st.session_state.current_combinations = {}
+                    st.session_state.current_combinations = {
+                        i: combo.equipment for i, combo in enumerate(combinations, 1)
+                    }
+                    
                     # Create columns for the results
                     cols = st.columns(2)
                     for i, combo in enumerate(combinations, 1):
@@ -392,10 +418,6 @@ def main():
                             f"Combination {i} - Attack: {combo.total_attack}, Defense: {combo.total_defense}"
                             f" (Score: {combo.contribution_score:.2f})"
                         ):
-                            # Store the combination in session state
-                            combo_key = f"combo_{i}"
-                            st.session_state[combo_key] = combo.equipment
-                            
                             for slot, equip_name in combo.equipment.items():
                                 if equip_name != "None":
                                     st.write(f"{slot}: {equip_name}")
@@ -409,10 +431,18 @@ def main():
                             
                             # Add button to apply this combination
                             if st.button("Apply This Combination", key=f"apply_{i}"):
-                                # Apply the combination from session state
-                                for slot, equip_name in st.session_state[combo_key].items():
+                                # Get the combination from session state
+                                selected_combo = st.session_state.current_combinations[i]
+                                for slot, equip_name in selected_combo.items():
                                     st.session_state[f"select_{slot}"] = equip_name
                                 st.experimental_rerun()
+                    
+                    # Show search statistics
+                    st.sidebar.write("Search Statistics:")
+                    st.sidebar.write(f"Total possible combinations: {total_combinations:,}")
+                    st.sidebar.write(f"Combinations checked: {total_checked:,}")
+                    st.sidebar.write(f"Valid combinations found: {len(combinations):,}")
+                    
         except Exception as e:
             search_results_container.error(f"An error occurred while searching: {str(e)}")
             st.error("Please try different search criteria or contact the administrator if the problem persists.")
@@ -455,7 +485,7 @@ def sort_equipment_by_score(equipment_list: List[Equipment], requirements: Equip
     return [e for e, _ in scored_equipment]
 
 @st.cache_data(show_spinner=False)
-def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequirement) -> List[EquipmentCombination]:
+def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequirement, max_combinations: int = 10) -> List[EquipmentCombination]:
     """Find equipment combinations that meet the given requirements."""
     valid_combinations = []
     total_checked = 0
@@ -474,79 +504,6 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
     for equip_list in valid_equipment.values():
         total_combinations *= (len(equip_list) + 1)  # +1 for empty slot option
     
-    def check_continue() -> bool:
-        """Check if we should continue searching based on progress."""
-        if len(valid_combinations) >= 10:
-            if not st.session_state.get('continue_search', True):
-                return False
-            st.session_state.continue_search = st.sidebar.button(
-                "Found 10 combinations. Continue searching?",
-                key="continue_10"
-            )
-            return st.session_state.continue_search
-            
-        if total_checked >= 10000:
-            if not st.session_state.get('continue_search', True):
-                return False
-            st.session_state.continue_search = st.sidebar.button(
-                f"Checked {total_checked} combinations. Continue searching?",
-                key="continue_10000"
-            )
-            return st.session_state.continue_search
-            
-        return True
-    
-    # Helper function to check if a combination meets requirements
-    def meets_requirements(combination: Dict[str, Equipment]) -> bool:
-        total_attack = sum(e.attack for e in combination.values() if e is not None)
-        total_defense = sum(e.defense for e in combination.values() if e is not None)
-        
-        # Early exit if stats don't meet requirements
-        if total_attack < requirements.min_attack or total_defense < requirements.min_defense:
-            return False
-        
-        # Calculate total skills
-        skills = defaultdict(int)
-        ex_skills = {}
-        
-        # Track required skills found
-        required_skills_found = set()
-        required_ex_skills_found = set()
-        
-        for equip in combination.values():
-            if equip is not None:
-                # Add regular skills
-                for skill, boost in equip.skills.items():
-                    skills[skill] += boost
-                    if skill in requirements.required_skills:
-                        if skills[skill] >= requirements.required_skills[skill]:
-                            required_skills_found.add(skill)
-                
-                # Add EX skills (take highest boost)
-                if equip.ex_skill:
-                    skill_name, boost = equip.ex_skill
-                    if skill_name not in ex_skills or boost > ex_skills[skill_name]:
-                        ex_skills[skill_name] = boost
-                        if skill_name in requirements.required_ex_skills:
-                            required_ex_skills_found.add(skill_name)
-                
-                # Early exit if we found all required skills
-                if (len(required_skills_found) == len(requirements.required_skills) and
-                    len(required_ex_skills_found) == len(requirements.required_ex_skills)):
-                    return True
-        
-        # Check required skills
-        for skill, required_level in requirements.required_skills.items():
-            if skills.get(skill, 0) < required_level:
-                return False
-        
-        # Check required EX skills
-        for skill in requirements.required_ex_skills:
-            if skill not in ex_skills:
-                return False
-        
-        return True
-    
     # Generate combinations using recursive approach with early pruning
     current_combination = {
         'Weapon': None,
@@ -560,7 +517,8 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
     def recursive_search(slot_index: int = 0):
         nonlocal total_checked
         
-        if not check_continue():
+        # Stop conditions
+        if total_checked >= 10000 or len(valid_combinations) >= max_combinations:
             return
             
         slots = list(current_combination.keys())
@@ -606,7 +564,7 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
         for equipment in valid_equipment[current_slot]:
             current_combination[current_slot] = equipment
             recursive_search(slot_index + 1)
-            if len(valid_combinations) >= 10 and not st.session_state.get('continue_search', True):
+            if len(valid_combinations) >= max_combinations:
                 return
         
         # Also try without any equipment in this slot
@@ -617,7 +575,58 @@ def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequi
     
     # Sort combinations by contribution score and then total attack + defense
     valid_combinations.sort(key=lambda x: (x.contribution_score, x.total_attack + x.total_defense), reverse=True)
-    return valid_combinations
+    return valid_combinations, total_checked, total_combinations
+
+def meets_requirements(combination: Dict[str, Equipment]) -> bool:
+    """Check if a combination meets the requirements."""
+    total_attack = sum(e.attack for e in combination.values() if e is not None)
+    total_defense = sum(e.defense for e in combination.values() if e is not None)
+    
+    # Early exit if stats don't meet requirements
+    if total_attack < min_attack or total_defense < min_defense:
+        return False
+    
+    # Calculate total skills
+    skills = defaultdict(int)
+    ex_skills = {}
+    
+    # Track required skills found
+    required_skills_found = set()
+    required_ex_skills_found = set()
+    
+    for equip in combination.values():
+        if equip is not None:
+            # Add regular skills
+            for skill, boost in equip.skills.items():
+                skills[skill] += boost
+                if skill in required_skills:
+                    if skills[skill] >= required_skills[skill]:
+                        required_skills_found.add(skill)
+            
+            # Add EX skills (take highest boost)
+            if equip.ex_skill:
+                skill_name, boost = equip.ex_skill
+                if skill_name not in ex_skills or boost > ex_skills[skill_name]:
+                    ex_skills[skill_name] = boost
+                    if skill_name in required_ex_skills:
+                        required_ex_skills_found.add(skill_name)
+            
+            # Early exit if we found all required skills
+            if (len(required_skills_found) == len(required_skills) and
+                len(required_ex_skills_found) == len(required_ex_skills)):
+                return True
+    
+    # Check required skills
+    for skill, required_level in required_skills.items():
+        if skills.get(skill, 0) < required_level:
+            return False
+    
+    # Check required EX skills
+    for skill in required_ex_skills:
+        if skill not in ex_skills:
+            return False
+    
+    return True
 
 if __name__ == "__main__":
     main() 
