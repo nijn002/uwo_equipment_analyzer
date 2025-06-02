@@ -415,12 +415,12 @@ class EquipmentCombination:
     skills: Dict[str, int]
     ex_skills: Dict[str, int]
 
-@st.cache_data
-def find_combinations(database: EquipmentDatabase, requirements: EquipmentRequirement) -> List[EquipmentCombination]:
+@st.cache_data(show_spinner=False)
+def find_combinations(_database: EquipmentDatabase, requirements: EquipmentRequirement) -> List[EquipmentCombination]:
     """Find equipment combinations that meet the given requirements.
     
     Args:
-        database (EquipmentDatabase): The equipment database to search
+        _database (EquipmentDatabase): The equipment database to search (underscore prefix to skip hashing)
         requirements (EquipmentRequirement): The search requirements
         
     Returns:
@@ -430,7 +430,7 @@ def find_combinations(database: EquipmentDatabase, requirements: EquipmentRequir
     
     # Get all equipment that matches gender requirement
     valid_equipment = defaultdict(list)
-    for part, equipment_list in database.equipment_by_part.items():
+    for part, equipment_list in _database.equipment_by_part.items():
         for equip in equipment_list:
             if requirements.gender == "All" or equip.gender in [requirements.gender, "All"]:
                 # Early pruning: check if equipment has any required skills
